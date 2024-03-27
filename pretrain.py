@@ -101,12 +101,12 @@ def pre_train(model_name:str, backbone_name:str = None):
     scheduler = ReduceLROnPlateau(optimizer, mode='min', patience=10, factor=0.8, min_lr=1e-8)
 
     step = 0
+    all_loss = 0
     for epoch in range(PreTrainConfig.epoch_num):
         # train
-        model.train()
-        all_loss = 0
         prog_iter = tqdm(train_dataloader, desc="training", leave=False)
         for batch_idx, batch in enumerate(prog_iter):
+            model.train()
             if model_name == 'simclr':
                 batch = torch.cat(batch, dim=0)
             batch = batch.to(device)
@@ -120,7 +120,7 @@ def pre_train(model_name:str, backbone_name:str = None):
             if step % PreTrainConfig.val_every_n_steps == 0:
                 logger.info(f'batch_iter={step // PreTrainConfig.val_every_n_steps} train_loss={all_loss}')
                 writer.add_scalar('loss/train', all_loss, step // PreTrainConfig.val_every_n_steps)
-
+                all_loss = 0
                 # validate
                 model.eval()
                 prog_iter = tqdm(val_dataloader, desc="validating", leave=False)
@@ -147,10 +147,11 @@ def pre_train(model_name:str, backbone_name:str = None):
                 early_stopping.check(all_loss, model)
                 if early_stopping.early_stop:
                     return
+                all_loss = 0
 
 if __name__ == '__main__':
-    
+    backbone = None
     # model_name = 'mae'
-    # model_name = 'resnet_autoencoder'
-    model_name, backbone = 'simclr', 'resnet'
+    model_name = 'resnet_autoencoder'
+    # model_name, backbone = 'simclr', 'resnet'
     pre_train(model_name=model_name, backbone_name=backbone)

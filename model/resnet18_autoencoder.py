@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from typing import Type, List
+import torch.nn.functional as F
 
 def conv3x3(in_planes: int, out_planes: int, stride: int = 1, groups: int = 1, dilation: int = 1):
     return nn.Conv1d(
@@ -215,18 +216,20 @@ class Decoder(nn.Module):
 class AutoEncoder(nn.Module):
 
     name = 'resnet_autoencoder'
+    out_dim = 512
 
     def __init__(self) -> None:
         super().__init__()
         self.encoder = Encoder(BasicBlockEnc, [2, 2, 2, 2]) 
         self.decoder = Decoder(BasicBlockDec, [2, 2, 2, 2])
     
-
     def forward_loss(self, x):
         z = self.encoder(x)
         y = self.decoder(z)
-        loss = (x - y) ** 2
-        return loss.sum()
+        return F.mse_loss(x, y)
+    
+    def forward_feature(self, x):
+        return self.encoder(x).mean(dim=2)
         
 
 if __name__ == '__main__':

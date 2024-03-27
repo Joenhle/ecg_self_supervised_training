@@ -45,7 +45,7 @@ class PatchEmbed_1D(nn.Module):
     
 class MaskedAutoencoderViT(nn.Module):
     
-    name = 'mae1d'
+    name = 'mae'
     
     """ Masked Autoencoder with VisionTransformer backbone
     """

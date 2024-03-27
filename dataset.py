@@ -67,3 +67,27 @@ class PreTrainContrastDataset(Dataset):
         x = torch.tensor(x, dtype=torch.float32)
         x = [torch.from_numpy(self.base_transform(x.numpy())) for _ in range(self.n_view)]
         return x
+    
+class MitDataset(Dataset):
+    """
+        mit dataset for fintune(train, validation), and test
+    """
+    name = 'mit'
+    def __init__(self, index_path):
+        index_arr = []
+        for line in open(index_path):
+            temp = line.strip().split()
+            index_arr.append(temp)
+        self.index_arr = index_arr
+        self.label_map = {'A':0, 'V':1, 'N':2}
+    
+    def __len__(self):
+        return len(self.index_arr)
+
+    def __getitem__(self, index):
+        data = self.index_arr[index]
+        x = np.load(data[0]).astype(np.float32)
+        x = torch.tensor(x, dtype=torch.float32)
+        target = torch.tensor(self.label_map[data[2]], dtype=torch.long)
+        # 两个导联，只取一个导联
+        return x[:1], target
