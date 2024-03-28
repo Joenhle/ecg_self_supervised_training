@@ -152,6 +152,6 @@ def pre_train(model_name:str, backbone_name:str = None):
 if __name__ == '__main__':
     backbone = None
     # model_name = 'mae'
-    model_name = 'resnet_autoencoder'
-    # model_name, backbone = 'simclr', 'resnet'
+    # model_name = 'resnet_autoencoder'
+    model_name, backbone = 'simclr', 'resnet'
     pre_train(model_name=model_name, backbone_name=backbone)

@@ -9,8 +9,10 @@ from torch.utils.data import DataLoader
 from sklearn.metrics import precision_recall_fscore_support
 from sklearn.metrics import classification_report 
 from model.resnet18_autoencoder import AutoEncoder
+import model.mae as model_mae_1d
 from model.classifier import MlpHeadV1, Classifier
 from util.schedule import EarlyStopping
+from config import *
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
@@ -18,6 +20,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.manual_seed(41)
 torch.cuda.manual_seed(41)
 print(device)
+
 
 def signal_handler(sig, frame):
     pass
@@ -69,42 +72,62 @@ def infer(model, data_loader, task, output_metrics = False, writer = None, iter 
     print(classification_report(y_true_list, y_pred_list))    
     return all_loss, micro_f1, macro_p, macro_r, macro_f1
 
-def finetune(model_name, backbone, classifier_head_name):
+
+def get_config_and_model(type, model_name, backbone, classifier_head_name):
     # make classifier_model (pretrain_model(backbone) + classifier_head)
     pre_train_model, classifier_head = None, None
     if model_name == 'resnet_autoencoder':
-        from config import ResnetAEFineTuneConfig as FineTuneConfig
+        if type == 'finetune':
+            config = ResnetAEFineTuneConfig()
+        else:
+            config = ResnetAETestConfig()
         pre_train_model = AutoEncoder()
     elif model_name == 'mae':
-        from config import MaeFineTuneConfig as FineTuneConfig
+        if type == "finetune":
+            config = MaeFineTuneConfig()
+        else:
+            config = MaeTestConfig()
+        pre_train_model = model_mae_1d.mae_prefer_custom(winsize=config.winsize, patch_size=config.patch_size)
         pass
     elif model_name == 'simclr':
-        from config import SimCLRFineTuneConfig as FineTuneConfig
+        if type == "finetune":
+            config = SimCLRFineTuneConfig()
+        else:
+            config = SimCLRTestConfig()
         pass
 
     if classifier_head_name == 'mlp_v1':
-        classifier_head = MlpHeadV1(pretrain_out_dim=pre_train_model.out_dim, class_n=FineTuneConfig.class_n)
-    
+        classifier_head = MlpHeadV1(pretrain_out_dim=pre_train_model.out_dim, class_n=config.class_n)
+
     model = Classifier(pre_train_model=pre_train_model, classifier_head=classifier_head)
-    checkpoint = torch.load(FineTuneConfig.ckpt_path, map_location='cpu')
-    model.pre_train_model.load_state_dict(checkpoint, strict=True)
-    
-    if FineTuneConfig.pretrain_model_freeze:
-        for _, p in model.pre_train_model.named_parameters():
-            p.requires_grad = False
+    checkpoint = torch.load(config.ckpt_path, map_location='cpu')
+
+    if type == "finetune":
+        model.pre_train_model.load_state_dict(checkpoint, strict=True)
+        if config.pretrain_model_freeze:
+            for _, p in model.pre_train_model.named_parameters():
+                p.requires_grad = False
+    else:
+        model.load_state_dict(checkpoint, strict=True)
     
     model = model.to(device)
+    return model, config
+
+
+def finetune(model_name, backbone, classifier_head_name):
+
+    model, config = get_config_and_model("finetune", model_name, backbone, classifier_head_name)
 
     # make data
-    train_dataset = MitDataset(FineTuneConfig.train_data_path)
-    train_dataloader = DataLoader(train_dataset, batch_size=FineTuneConfig.batch_size, shuffle=True, num_workers=0, drop_last=True, pin_memory=False, worker_init_fn=dataloader_signal_handle)
+    train_dataset = MitDataset(config.train_data_path)
+    train_dataloader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True, num_workers=0, drop_last=True, pin_memory=False, worker_init_fn=dataloader_signal_handle)
     # TODO 后面改成直接把运行时刻的pretrain或者finetune_test文件+config文件直接拷贝到ckpt目录里形成快照
-    val_dataset = MitDataset(FineTuneConfig.val_data_path)
-    val_dataloader = DataLoader(val_dataset, batch_size=FineTuneConfig.batch_size, shuffle=True, num_workers=0, drop_last=True, pin_memory=False, worker_init_fn=dataloader_signal_handle)
+    val_dataset = MitDataset(config.val_data_path)
+    val_dataloader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=True, num_workers=0, drop_last=True, pin_memory=False, worker_init_fn=dataloader_signal_handle)
 
 
     # make ckpt_dir
-    ckpt_dir = 'ckpt/classifier/{}/{}/{}/{}'.format(FineTuneConfig.train_data_name, FineTuneConfig.val_data_name, model.name, datetime.now().astimezone(pytz.timezone('Asia/Shanghai')).strftime("%Y%m%d%H%M"))
+    ckpt_dir = 'ckpt/classifier/{}/{}/{}/{}'.format(config.train_data_name, config.val_data_name, model.name, datetime.now().astimezone(pytz.timezone('Asia/Shanghai')).strftime("%Y%m%d%H%M"))
     writer = SummaryWriter(log_dir=ckpt_dir, flush_secs=2)
     
     # ready train
@@ -114,7 +137,7 @@ def finetune(model_name, backbone, classifier_head_name):
     loss_func = torch.nn.CrossEntropyLoss()
     scheduler = ReduceLROnPlateau(optimizer, mode='max', patience=10, factor=0.8, min_lr=1e-8)
     
-    for epoch in range(FineTuneConfig.epoch_num):
+    for epoch in range(config.epoch_num):
         # train
         all_loss = 0
         prog_iter = tqdm(train_dataloader, desc="training", leave=False)
@@ -141,13 +164,19 @@ def finetune(model_name, backbone, classifier_head_name):
         if early_stopping.early_stop:
             return
 
-def test(model_name, backbone):
-    pass
+def test(model_name, backbone, classifier_head_name):
+    model, config = get_config_and_model("test", model_name, backbone, classifier_head_name)
+
+    test_dataset = MitDataset(config.test_data_path)
+    test_dataloader = DataLoader(test_dataset, batch_size=config.batch_size, shuffle=True, num_workers=0, drop_last=True, pin_memory=False, worker_init_fn=dataloader_signal_handle)
+
+    all_loss, micro_f1, macro_p, macro_r, macro_f1 = infer(model, test_dataloader, "testing")
+    print('micro_f1 = {}, macro_p = {}, macro_r = {}, macro_f1 = {}'.format(micro_f1, macro_p, macro_r, macro_f1))
 
 
 if __name__ == '__main__':
-
     backbone = None
-    model_name = "resnet_autoencoder"
+    model_name = "mae"
     classifier_head_name = "mlp_v1"
-    finetune(model_name=model_name, backbone=backbone, classifier_head_name=classifier_head_name)
+    # finetune(model_name=model_name, backbone=backbone, classifier_head_name=classifier_head_name)
+    test(model_name=model_name, backbone=backbone, classifier_head_name=classifier_head_name)
